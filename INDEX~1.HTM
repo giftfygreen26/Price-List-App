@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Digital Stainless Steel Price List</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">S</div>
+      <div>
+        <h1>Digital Stainless Steel Price List</h1>
+        <div class="sub">Smart Price Search &amp; Quotation Tool</div>
+      </div>
+    </div>
+    <div class="sub" id="headerMeta"></div>
+  </header>
+
+  <nav class="tabs">
+    <button data-view="search" class="active">🏠 PRICE SEARCH</button>
+    <button data-view="products">📦 PRODUCTS</button>
+    <button data-view="history">💰 PRICE HISTORY</button>
+    <button data-view="admin">✏️ PRICE MANAGEMENT</button>
+    <button data-view="quote">🧾 QUOTATION</button>
+    <button data-view="import">📥 IMPORT / REVIEW</button>
+  </nav>
+
+  <main>
+
+    <!-- ============= SEARCH VIEW ============= -->
+    <section class="view active" id="view-search">
+      <div class="search-hero">
+        <h2>🔎 Search Product</h2>
+        <p class="hint">Type anything — grade, surface, size, Thai or English, any order. e.g. "แผ่น 304 2B", "ท่อ 316", "304 3mm 4x8"</p>
+        <div class="search-box-wrap">
+          <span class="icon">🔎</span>
+          <input type="text" id="searchInput" placeholder="พิมพ์เพื่อค้นหา... e.g. แผ่น 304 2B" autocomplete="off">
+        </div>
+        <div class="quick-chips">
+          <button data-q="304 2B">304 2B</button>
+          <button data-q="304 BA">304 BA</button>
+          <button data-q="ท่อ 304">ท่อ 304</button>
+          <button data-q="เพลา 304">เพลา 304</button>
+          <button data-q="430">430</button>
+          <button data-q="เส้นแบน">เส้นแบน</button>
+          <button data-q="ฉากรีด">ฉากรีด</button>
+          <button data-q="316">316</button>
+          <button data-q="อลูมิเนียม A-1100">อลูมิเนียม A-1100</button>
+          <button data-q="ลายกันลื่น">ลายกันลื่น ตีนเป็ด</button>
+        </div>
+        <div class="filters-toggle" id="filtersToggle">⚙️ Optional filters ▾</div>
+        <div class="filters-panel" id="filtersPanel">
+          <select id="fType"><option value="">All product types</option></select>
+          <select id="fGrade"><option value="">All grades</option></select>
+          <select id="fSurface"><option value="">All surfaces</option></select>
+          <select id="fReview">
+            <option value="">All items</option>
+            <option value="hide">Hide ⚠️ needs-review</option>
+            <option value="only">⚠️ needs-review only</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="results-meta">
+        <div class="count" id="resultsCount"></div>
+        <div class="selected-bar">
+          <span class="subtle" id="selectedCount">0 selected</span>
+          <button class="btn btn-primary btn-sm" id="goQuoteBtn" disabled>🧾 Build Quotation →</button>
+        </div>
+      </div>
+
+      <div class="result-table-wrap">
+        <table class="results" id="resultsTable">
+          <thead>
+            <tr>
+              <th style="width:34px;"></th>
+              <th>Product</th>
+              <th>Grade</th>
+              <th>Surface</th>
+              <th>Size</th>
+              <th>Price</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none;">
+          <div class="big">🔍</div>
+          Start typing above to find a product — e.g. <b>"แผ่น 304 2B"</b>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============= PRODUCTS VIEW ============= -->
+    <section class="view" id="view-products">
+      <div class="stat-cards" id="productStats"></div>
+      <div class="toolbar">
+        <input type="text" id="prodSearch" placeholder="Filter products...">
+        <select id="prodTypeFilter"><option value="">All types</option></select>
+        <select id="prodGradeFilter"><option value="">All grades</option></select>
+      </div>
+      <div class="result-table-wrap">
+        <table class="plain" id="productsTable">
+          <thead><tr><th>ID</th><th>Type</th><th>Grade</th><th>Surface</th><th>Size</th><th>Unit</th><th>Current Price</th><th>Status</th><th></th></tr></thead>
+          <tbody id="productsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============= PRICE HISTORY VIEW ============= -->
+    <section class="view" id="view-history">
+      <div class="card">
+        <h3>💰 Price History Lookup</h3>
+        <p class="subtle">Search for a product to see every historical price on record. The most recent effective date is always the Current Selling Price.</p>
+        <input type="text" id="histSearch" placeholder="Search a product to view its full price history..." style="width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:8px;font-size:14px;margin-top:8px;">
+        <div id="histResultsList" style="margin-top:10px;"></div>
+      </div>
+      <div class="card section-gap" id="histDetailCard" style="display:none;">
+        <h3 id="histDetailTitle"></h3>
+        <table class="history-table" id="histDetailTable"></table>
+      </div>
+    </section>
+
+    <!-- ============= PRICE MANAGEMENT (ADMIN) VIEW ============= -->
+    <section class="view" id="view-admin">
+      <div class="two-col">
+        <div class="card">
+          <h3 id="productFormTitle">➕ Add New Product</h3>
+          <p class="subtle" id="productFormHint">Fill in the details for a brand-new product.</p>
+          <div class="form-grid">
+            <div><label>Product Type</label><input type="text" id="npType" placeholder="e.g. Sheet"></div>
+            <div><label>Product Type (Thai)</label><input type="text" id="npTypeTh" placeholder="e.g. แผ่นสแตนเลส"></div>
+            <div><label>Grade</label><input type="text" id="npGrade" placeholder="e.g. 304"></div>
+            <div><label>Surface / Finish</label><input type="text" id="npSurface" placeholder="e.g. 2B"></div>
+            <div style="grid-column:1/-1;"><label>Size / Dimension Label</label><input type="text" id="npDimLabel" placeholder="e.g. 1.0mm x 4' x 8'"></div>
+            <div><label>Unit</label><input type="text" id="npUnit" placeholder="e.g. Sheet / เส้น (Length)"></div>
+            <div style="display:flex;align-items:flex-end;gap:6px;padding-bottom:9px;">
+              <input type="checkbox" id="npNeedsReview" style="width:16px;height:16px;">
+              <label style="margin:0;">⚠️ Needs Review</label>
+            </div>
+            <div style="grid-column:1/-1;"><label>Review Note (shown on Import/Review tab)</label><input type="text" id="npReviewNote" placeholder="e.g. Verify alloy grade with supplier"></div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" id="addProductBtn">Add Product</button>
+            <button class="btn btn-secondary" id="cancelEditBtn" style="display:none;">Cancel Edit</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>💲 Add / Update Price</h3>
+          <p class="subtle">Adding a price creates a <b>new history record</b> — old prices are never overwritten.</p>
+          <div class="form-grid">
+            <div style="grid-column:1/-1;">
+              <label>Product</label>
+              <input type="text" id="priceProductSearch" placeholder="Search product to price...">
+              <div id="priceProductResults" class="subtle" style="max-height:140px;overflow:auto;margin-top:6px;"></div>
+            </div>
+            <div><label>Price (THB / unit)</label><input type="number" id="npPrice" step="0.01"></div>
+            <div><label>Price per KG (optional)</label><input type="number" id="npPriceKg" step="0.01"></div>
+            <div><label>Effective Date</label><input type="date" id="npDate"></div>
+            <div><label>Source / Notes</label><input type="text" id="npNotes" placeholder="e.g. Manual update"></div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" id="addPriceBtn" disabled>Save New Price</button>
+          </div>
+          <div id="selectedPriceProduct" class="subtle section-gap"></div>
+        </div>
+      </div>
+
+      <div class="card section-gap">
+        <div class="toolbar">
+          <h3 style="margin:0;flex:1;">📋 All Products (Admin View)</h3>
+          <input type="text" id="adminSearch" placeholder="Search...">
+          <button class="btn btn-secondary btn-sm" id="exportJsonBtn">⬇️ Export Data (JSON)</button>
+          <button class="btn btn-secondary btn-sm" id="exportCsvBtn">⬇️ Export Data (CSV)</button>
+        </div>
+        <div class="result-table-wrap">
+          <table class="plain" id="adminTable">
+            <thead><tr><th>Type</th><th>Grade</th><th>Surface</th><th>Size</th><th>Current Price</th><th>Status</th><th>Last Updated</th><th></th></tr></thead>
+            <tbody id="adminBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============= QUOTATION VIEW ============= -->
+    <section class="view" id="view-quote">
+      <div class="quote-layout">
+        <div class="card">
+          <h3>Selected Products</h3>
+          <ul class="selected-list" id="quoteSelectedList"></ul>
+          <p class="subtle" id="quoteEmptyHint">No products selected yet. Go to <b>Price Search</b>, tick items, then come back here.</p>
+        </div>
+        <div class="card">
+          <h3>🧾 Customer Quotation</h3>
+          <input type="text" id="customerName" class="customer-name-input" placeholder="Customer name (optional) — คุณลูกค้า">
+          <div class="quote-tabs">
+            <button data-lang="th" class="active">🇹🇭 Thai</button>
+            <button data-lang="en">🇬🇧 English</button>
+          </div>
+          <textarea class="quote-output" id="quoteOutput" readonly></textarea>
+          <div class="copy-row">
+            <button class="btn btn-primary" id="copyQuoteBtn">📋 COPY QUOTATION</button>
+            <button class="btn btn-secondary" id="clearQuoteBtn">Clear Selection</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============= IMPORT / REVIEW VIEW ============= -->
+    <section class="view" id="view-import">
+      <div class="card">
+        <h3>📥 Import New Price List (CSV)</h3>
+        <p class="subtle">CSV columns: <code>productId, productType, grade, surface, dimensionLabel, price, pricePerKg, effectiveDate, source, notes</code>. If <code>productId</code> is left blank, the system tries to match an existing product by type+grade+surface+size; unmatched rows are flagged for manual review before anything is saved.</p>
+        <label class="dropzone" id="dropzone">
+          <input type="file" id="csvFile" accept=".csv">
+          <div>📄 Click to choose a CSV file, or drag one here</div>
+        </label>
+        <div id="importSummary" class="section-gap"></div>
+        <div id="importPreviewWrap" class="section-gap" style="display:none;">
+          <div class="toolbar">
+            <h3 style="margin:0;flex:1;">Import Preview</h3>
+            <button class="btn btn-primary btn-sm" id="confirmImportBtn">✔ Confirm &amp; Import Matched Rows</button>
+          </div>
+          <div class="result-table-wrap">
+            <table class="plain" id="importTable">
+              <thead><tr><th>Row</th><th>Status</th><th>Matched Product</th><th>Price</th><th>Date</th><th>Notes</th></tr></thead>
+              <tbody id="importBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card section-gap">
+        <h3>⚠️ Data Import Review — Original PDF Extraction</h3>
+        <p class="subtle">Items below were flagged during the original PDF extraction (illegible handwriting, ambiguous cells, or missing data). Review and correct in Price Management as needed.</p>
+        <div class="result-table-wrap">
+          <table class="plain" id="reviewTable">
+            <thead><tr><th>Product</th><th>Size</th><th>Date</th><th>Issue</th><th></th></tr></thead>
+            <tbody id="reviewBody"></tbody>
+          </table>
+        </div>
+        <div class="section-gap" id="reviewNotesList"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">Digital Stainless Steel Price List — prototype built from the source PDF price list. Always double-check ⚠️ flagged items before quoting.</footer>
+  <div class="toast" id="toast"></div>
+  <div class="overlay" id="overlay"></div>
+  <aside class="detail-panel" id="detailPanel"></aside>
+
+</div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

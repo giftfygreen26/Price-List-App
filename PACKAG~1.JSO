@@ -1,0 +1,13 @@
+{
+  "name": "digital-stainless-steel-price-list",
+  "version": "1.0.0",
+  "description": "Digital Stainless Steel Price List — search, quotation, price history, and admin tools as a static web app.",
+  "private": true,
+  "scripts": {
+    "test": "node tests/test_app.js && node tests/test_admin_import.js && node tests/test_edit.js",
+    "start": "npx serve ."
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}
