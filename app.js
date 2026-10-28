@@ -32,6 +32,41 @@ const TYPE_LABEL_EN = {
 };
 
 /* ---------------------------------------------------------------------------
+   Cloud sync (Google Sheets via Apps Script) — see config.js
+--------------------------------------------------------------------------- */
+async function syncFromApi() {
+  if (typeof API_URL === "undefined" || !API_URL) return false;
+  if (typeof fetch !== "function") return false;
+  try {
+    const controller = (typeof AbortController !== "undefined") ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), 8000) : null;
+    const res = await fetch(API_URL, { method: "GET", signal: controller ? controller.signal : undefined });
+    if (timer) clearTimeout(timer);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (data && Array.isArray(data.products) && Array.isArray(data.priceHistory)) {
+      DB.products = data.products;
+      DB.priceHistory = data.priceHistory;
+      if (Array.isArray(data.reviewNotes)) DB.reviewNotes = data.reviewNotes;
+      if (data.meta) DB.meta = data.meta;
+      invalidateCache();
+      return true;
+    }
+  } catch (err) {
+    console.warn("Cloud sync failed — using the bundled data snapshot instead.", err);
+  }
+  return false;
+}
+function postToApi(action, payload) {
+  if (typeof API_URL === "undefined" || !API_URL) return Promise.resolve(null);
+  if (typeof fetch !== "function") return Promise.resolve(null);
+  const body = Object.assign({ action, key: (typeof API_KEY !== "undefined" ? API_KEY : "") }, payload);
+  return fetch(API_URL, { method: "POST", body: JSON.stringify(body) })
+    .then(r => r.json())
+    .catch(err => { console.warn("Cloud sync failed for action " + action, err); return null; });
+}
+
+/* ---------------------------------------------------------------------------
    State
 --------------------------------------------------------------------------- */
 let overlay = loadOverlay();
@@ -530,13 +565,16 @@ function productFormFields() {
     type: document.getElementById("npType"), typeTh: document.getElementById("npTypeTh"),
     grade: document.getElementById("npGrade"), surface: document.getElementById("npSurface"),
     dimLabel: document.getElementById("npDimLabel"), unit: document.getElementById("npUnit"),
+    price: document.getElementById("npEditPrice"), priceKg: document.getElementById("npEditPriceKg"),
+    active: document.getElementById("npActive"),
     needsReview: document.getElementById("npNeedsReview"), reviewNote: document.getElementById("npReviewNote"),
   };
 }
 function clearProductForm() {
   const f = productFormFields();
   f.type.value = ""; f.typeTh.value = ""; f.grade.value = ""; f.surface.value = "";
-  f.dimLabel.value = ""; f.unit.value = ""; f.needsReview.checked = false; f.reviewNote.value = "";
+  f.dimLabel.value = ""; f.unit.value = ""; f.price.value = ""; f.priceKg.value = "";
+  f.active.checked = true; f.needsReview.checked = false; f.reviewNote.value = "";
 }
 function startEditProduct(id) {
   const p = productIndex()[id];
@@ -545,9 +583,13 @@ function startEditProduct(id) {
   const f = productFormFields();
   f.type.value = p.productType; f.typeTh.value = p.productTypeTh; f.grade.value = p.grade;
   f.surface.value = p.surface === "-" ? "" : p.surface; f.dimLabel.value = p.dimensionLabel; f.unit.value = p.unit;
+  const cur = getCurrentPrice(id);
+  f.price.value = cur ? cur.price : ""; f.priceKg.value = (cur && cur.pricePerKg != null) ? cur.pricePerKg : "";
+  f.active.checked = (p.active !== false);
   f.needsReview.checked = !!p.needsReview; f.reviewNote.value = p.reviewNote || "";
   document.getElementById("productFormTitle").textContent = "✏️ Editing Product";
-  document.getElementById("productFormHint").textContent = "Editing: " + gradeHeader(p) + " — " + p.dimensionLabel + ". Changes save instantly to this browser.";
+  document.getElementById("productFormHint").textContent = "Editing: " + gradeHeader(p) + " — " + p.dimensionLabel +
+    (cur ? " (current price: " + fmtBaht(cur.price) + ")" : " (no price on record yet)") + ". Changes save instantly to this browser.";
   document.getElementById("addProductBtn").textContent = "Save Changes";
   document.getElementById("cancelEditBtn").style.display = "inline-block";
   switchView("admin");
@@ -560,6 +602,30 @@ function exitEditMode() {
   document.getElementById("productFormHint").textContent = "Fill in the details for a brand-new product.";
   document.getElementById("addProductBtn").textContent = "Add Product";
   document.getElementById("cancelEditBtn").style.display = "none";
+}
+// Finds an existing product with the same type+grade+surface+size, so Admin
+// can warn instead of silently creating a duplicate entry.
+function findDuplicateProduct(ptype, grade, surface, dimLabel, excludeId) {
+  return getAllProducts().find(p =>
+    p.id !== excludeId &&
+    normText(p.productType) === normText(ptype) &&
+    normText(p.grade) === normText(grade) &&
+    normText(p.surface || "-") === normText(surface || "-") &&
+    normText(p.dimensionLabel) === normText(dimLabel)
+  );
+}
+// Directly flips a product's active flag from the Admin table, without
+// opening the full edit form — the quickest way to hide a mistaken/duplicate
+// entry while keeping its price history intact.
+function toggleProductActive(id) {
+  const p = productIndex()[id];
+  if (!p) return;
+  overlay.editedProducts[id] = Object.assign({}, overlay.editedProducts[id], { active: !(p.active !== false) });
+  saveOverlay(); invalidateCache();
+  const updated = productIndex()[id];
+  postToApi("upsertProduct", { product: updated });
+  toast(updated.active ? "Reactivated ✓" : "Deactivated — hidden from search, history kept ✓");
+  renderAdminView();
 }
 
 function renderAdminView() {
@@ -577,13 +643,18 @@ function renderAdminView() {
     const needsReview = f.needsReview.checked;
     const reviewNote = f.reviewNote.value.trim();
     if (!ptype || !grade || !dimLabel) { toast("Please fill Product Type, Grade, and Size."); return; }
+    const active = f.active.checked;
+    const priceVal = parseFloat(f.price.value);
+    const priceKgVal = parseFloat(f.priceKg.value);
 
     if (editingProductId) {
       overlay.editedProducts[editingProductId] = {
         productType: ptype, productTypeTh: ptypeTh || ptype, grade, surface, dimensionLabel: dimLabel,
-        unit, needsReview, reviewNote,
+        unit, active, needsReview, reviewNote,
       };
       saveOverlay(); invalidateCache();
+      const updatedProduct = productIndex()[editingProductId];
+      postToApi("upsertProduct", { product: updatedProduct });
       // If the admin just cleared the review flag, also clear it on the CURRENT
       // price record (the one shown on the main search page) — older historical
       // price records stay flagged as-is, preserving the extraction audit trail.
@@ -592,6 +663,26 @@ function renderAdminView() {
         if (cur && cur.needsReview) {
           overlay.priceOverrides[cur.id] = { needsReview: false };
           saveOverlay(); invalidateCache();
+          postToApi("upsertPrice", { price: Object.assign({}, cur, { needsReview: false }) });
+        }
+      }
+      // Editing the price field adds a NEW price-history record (dated today)
+      // rather than silently rewriting the old one — this is what actually
+      // makes an edited price show up, since price is tracked as history.
+      if (!isNaN(priceVal)) {
+        const curPrice = getCurrentPrice(editingProductId);
+        const priceChanged = !curPrice || Number(curPrice.price) !== priceVal ||
+          (!isNaN(priceKgVal) && Number(curPrice.pricePerKg) !== priceKgVal);
+        if (priceChanged) {
+          const newPrice = {
+            id: "NH" + Date.now(), productId: editingProductId, price: priceVal,
+            pricePerKg: isNaN(priceKgVal) ? null : priceKgVal, pricePerKgCalculated: false,
+            currency: "THB", effectiveDate: new Date().toISOString().slice(0, 10),
+            source: "Manual edit (Price Management)", notes: "", needsReview: false,
+          };
+          overlay.addedPrices.push(newPrice);
+          saveOverlay(); invalidateCache();
+          postToApi("addPrice", { price: newPrice });
         }
       }
       populateFilterOptions();
@@ -601,12 +692,42 @@ function renderAdminView() {
       return;
     }
 
+    // Adding a brand-new product: warn instead of silently creating a
+    // duplicate if the exact same type+grade+surface+size already exists.
+    const dup = findDuplicateProduct(ptype, grade, surface, dimLabel, null);
+    if (dup) {
+      toast("This already exists (" + dup.id + ") — opening it for editing instead of creating a duplicate.");
+      startEditProduct(dup.id);
+      return;
+    }
+
     const id = "NP" + Date.now();
-    overlay.addedProducts.push({
+    const newProduct = {
       id, productType: ptype, productTypeTh: ptypeTh || ptype, grade, surface, dimensionLabel: dimLabel,
-      dimensions: {}, unit, active: true, searchTokens: [], needsReview, reviewNote,
-    });
+      dimensions: {}, unit, active, searchTokens: [], needsReview, reviewNote,
+    };
+    overlay.addedProducts.push(newProduct);
     saveOverlay(); invalidateCache(); populateFilterOptions();
+    postToApi("upsertProduct", { product: newProduct });
+
+    if (!isNaN(priceVal)) {
+      // Price was filled in on the same form — add it immediately instead of
+      // making the admin search for the product again below.
+      const newPrice = {
+        id: "NH" + Date.now(), productId: id, price: priceVal,
+        pricePerKg: isNaN(priceKgVal) ? null : priceKgVal, pricePerKgCalculated: false,
+        currency: "THB", effectiveDate: new Date().toISOString().slice(0, 10),
+        source: "Manual entry (Price Management)", notes: "", needsReview: false,
+      };
+      overlay.addedPrices.push(newPrice);
+      saveOverlay(); invalidateCache();
+      postToApi("addPrice", { price: newPrice });
+      toast("Product and price added ✓");
+      clearProductForm();
+      renderAdminView();
+      return;
+    }
+
     toast("Product added. Now add a price for it below.");
     clearProductForm();
     document.getElementById("priceProductSearch").value = dimLabel;
@@ -640,12 +761,14 @@ function renderAdminView() {
     const date = document.getElementById("npDate").value;
     const notes = document.getElementById("npNotes").value.trim();
     if (!price || !date) { toast("Price and effective date are required."); return; }
-    overlay.addedPrices.push({
+    const newPrice = {
       id: "NH" + Date.now(), productId: selectedPriceProductId, price, pricePerKg: isNaN(priceKg) ? null : priceKg,
       pricePerKgCalculated: false, currency: "THB", effectiveDate: date, source: "Manual entry (Price Management)",
       notes, needsReview: false,
-    });
+    };
+    overlay.addedPrices.push(newPrice);
     saveOverlay(); invalidateCache();
+    postToApi("addPrice", { price: newPrice });
     toast("New price saved — this is now the Current Price if it's the latest date.");
     document.getElementById("npPrice").value = "";
     document.getElementById("npPriceKg").value = "";
@@ -658,17 +781,21 @@ function renderAdminView() {
     const products = getAllProducts().filter(p => !q || blobCache()[p.id].includes(q)).slice(0, 300);
     document.getElementById("adminBody").innerHTML = products.map(p => {
       const cur = getCurrentPrice(p.id);
-      return `<tr>
+      const isActive = p.active !== false;
+      const statusPill = !isActive ? '<span class="pill">🚫 Inactive</span>' :
+        p.needsReview ? '<span class="pill pill-warn">⚠️ Review</span>' : '<span class="pill pill-ok">OK</span>';
+      return `<tr${isActive ? "" : ' style="opacity:0.55;"'}>
         <td>${escapeHtml(TYPE_LABEL_EN[p.productType] || p.productType)}</td>
         <td>${escapeHtml(p.grade)}</td>
         <td>${escapeHtml(p.surface)}</td>
         <td>${escapeHtml(p.dimensionLabel)}</td>
         <td><b>${cur ? fmtBaht(cur.price) : "—"}</b></td>
-        <td>${p.needsReview ? '<span class="pill pill-warn">⚠️ Review</span>' : '<span class="pill pill-ok">OK</span>'}</td>
+        <td>${statusPill}</td>
         <td class="subtle">${cur ? fmtDate(cur.effectiveDate) : "—"}</td>
         <td style="white-space:nowrap;">
           <button class="btn btn-ghost btn-sm edit-product-btn" data-id="${p.id}">✏️ Edit</button>
           <button class="btn btn-ghost btn-sm quick-price-btn" data-id="${p.id}">+ Price</button>
+          <button class="btn btn-ghost btn-sm toggle-active-btn" data-id="${p.id}">${isActive ? "🚫 Deactivate" : "✅ Activate"}</button>
         </td>
       </tr>`;
     }).join("") || `<tr><td colspan=8 class="subtle" style="padding:16px;text-align:center;">No products.</td></tr>`;
@@ -680,6 +807,7 @@ function renderAdminView() {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }));
     document.getElementById("adminBody").querySelectorAll(".edit-product-btn").forEach(b => b.addEventListener("click", () => startEditProduct(b.dataset.id)));
+    document.getElementById("adminBody").querySelectorAll(".toggle-active-btn").forEach(b => b.addEventListener("click", () => toggleProductActive(b.dataset.id)));
   }
   document.getElementById("adminSearch").oninput = debounce(draw, 80);
   draw();
@@ -810,32 +938,133 @@ let lastImportRows = [];
 function renderImportView() {
   document.getElementById("importSummary").innerHTML = "";
   document.getElementById("importPreviewWrap").style.display = "none";
+  const dateEl = document.getElementById("importDate");
+  if (dateEl && !dateEl.value) dateEl.value = new Date().toISOString().slice(0, 10);
 
   const dz = document.getElementById("dropzone");
   const fileInput = document.getElementById("csvFile");
   dz.onclick = () => fileInput.click();
   dz.ondragover = (e) => { e.preventDefault(); dz.classList.add("drag"); };
   dz.ondragleave = () => dz.classList.remove("drag");
-  dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove("drag"); if (e.dataTransfer.files[0]) handleCsvFile(e.dataTransfer.files[0]); };
-  fileInput.onchange = () => { if (fileInput.files[0]) handleCsvFile(fileInput.files[0]); };
+  dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove("drag"); if (e.dataTransfer.files[0]) handleImportFile(e.dataTransfer.files[0]); };
+  fileInput.onchange = () => { if (fileInput.files[0]) handleImportFile(fileInput.files[0]); };
 
   document.getElementById("confirmImportBtn").onclick = confirmImport;
 
   renderReviewTable();
 }
 
-function handleCsvFile(file) {
+// Accepts .csv (plain text) or .xlsx/.xls (parsed via the SheetJS library
+// loaded in index.html). Excel files are handled two ways: if a sheet already
+// uses our long-format column names (productId/productType/.../price/...) it's
+// used directly; otherwise we look for a "wide" supplier-style sheet (Grade,
+// Surface, Size (mm), B/kg, plus one column per panel size like "4' x 8'")
+// and melt it into the same row shape CSV rows produce.
+function handleImportFile(file) {
+  const name = (file.name || "").toLowerCase();
+  const isExcel = name.endsWith(".xlsx") || name.endsWith(".xls");
   const reader = new FileReader();
   reader.onload = (e) => {
     try {
-      const rows = parseCsv(e.target.result);
+      let rows;
+      if (isExcel) {
+        if (typeof XLSX === "undefined") { toast("Excel support failed to load — try a CSV file instead."); return; }
+        const wb = XLSX.read(e.target.result, { type: "array" });
+        rows = extractRowsFromWorkbook(wb);
+        if (!rows.length) { toast("Could not find usable columns in that Excel file. Expected either the standard import columns, or a sheet with Grade / Surface / Size (mm) / B per kg + panel-size columns."); return; }
+      } else {
+        rows = parseCsv(e.target.result);
+      }
       lastImportRows = matchImportRows(rows);
       showImportPreview(lastImportRows);
     } catch (err) {
-      toast("Could not parse CSV: " + err.message);
+      toast("Could not read file: " + err.message);
     }
   };
-  reader.readAsText(file);
+  if (isExcel) reader.readAsArrayBuffer(file);
+  else reader.readAsText(file);
+}
+
+function extractRowsFromWorkbook(wb) {
+  // Pass 1: any sheet already in our long/CSV column format.
+  for (const sheetName of wb.SheetNames) {
+    const json = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
+    if (!json.length) continue;
+    const headers = Object.keys(json[0]).map(h => h.toLowerCase().trim());
+    if (headers.includes("dimensionlabel") && headers.includes("price")) {
+      return json.map(normalizeLongRow);
+    }
+  }
+  // Pass 2: a "wide" supplier price sheet — melt it into long-format rows.
+  for (const sheetName of wb.SheetNames) {
+    const json = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
+    if (!json.length) continue;
+    const rows = meltWideSheet(json);
+    if (rows.length) return rows;
+  }
+  return [];
+}
+
+function normalizeLongRow(r) {
+  const out = {};
+  Object.keys(r).forEach(k => { out[k.trim()] = r[k]; });
+  // sheet_to_json preserves original header casing; map common variants down
+  // to the exact keys matchImportRows/confirmImport expect.
+  const wanted = ["productId", "productType", "productTypeTh", "grade", "surface", "dimensionLabel", "unit", "price", "pricePerKg", "effectiveDate", "source", "notes"];
+  const lowerMap = {};
+  Object.keys(out).forEach(k => { lowerMap[k.toLowerCase()] = k; });
+  const norm = {};
+  wanted.forEach(w => {
+    const foundKey = lowerMap[w.toLowerCase()];
+    norm[w] = foundKey !== undefined ? String(out[foundKey]).trim() : "";
+  });
+  return norm;
+}
+
+function meltWideSheet(json) {
+  const sampleKeys = Object.keys(json[0]);
+  const norm = s => s.toString().toLowerCase().replace(/[^a-z0-9]/g, "");
+  const findKey = (patterns) => sampleKeys.find(k => patterns.some(p => norm(k).includes(p)));
+  const gradeKey = findKey(["grade"]);
+  const surfaceKey = findKey(["surface", "finish"]);
+  const sizeKey = findKey(["sizemm", "thicknessmm", "size"]);
+  const kgKey = findKey(["bperkg", "bkg", "pricekg", "perkg"]);
+  if (!gradeKey || !sizeKey) return [];
+  // Any other column that looks like a panel dimension (contains a letter x
+  // between two numbers, e.g. "4' x 8'") is treated as one price column.
+  const panelKeys = sampleKeys.filter(k => {
+    if ([gradeKey, surfaceKey, sizeKey, kgKey].includes(k)) return false;
+    return /\d\s*['"]?\s*x\s*\d/i.test(k);
+  });
+  if (!panelKeys.length) return [];
+  const dateEl = document.getElementById("importDate");
+  const effDate = (dateEl && dateEl.value) || new Date().toISOString().slice(0, 10);
+  const rows = [];
+  let skippedOtherCols = 0;
+  json.forEach(r => {
+    const grade = String(r[gradeKey] || "").trim();
+    const rawSize = r[sizeKey];
+    if (!grade || rawSize === "" || rawSize === undefined || isNaN(Number(rawSize))) return;
+    const surface = surfaceKey ? String(r[surfaceKey] || "").trim() : "";
+    const kg = kgKey ? r[kgKey] : "";
+    const sizeNum = Number(rawSize);
+    const sizeLabel = sizeNum.toFixed(1);
+    panelKeys.forEach(pk => {
+      const val = r[pk];
+      if (val === "" || val === undefined || val === null || isNaN(Number(val))) return;
+      rows.push({
+        productId: "", productType: "Sheet", productTypeTh: "", grade,
+        surface: surface || "-", dimensionLabel: sizeLabel + "mm x " + String(pk).trim(),
+        unit: "Sheet", price: String(val), pricePerKg: kg === "" ? "" : String(kg),
+        effectiveDate: effDate, source: "Excel import", notes: "",
+      });
+    });
+    Object.keys(r).forEach(k => {
+      if (![gradeKey, surfaceKey, sizeKey, kgKey, ...panelKeys].includes(k)) skippedOtherCols++;
+    });
+  });
+  if (skippedOtherCols) console.warn("meltWideSheet: some extra columns weren't recognized as panel sizes and were skipped.");
+  return rows;
 }
 function parseCsv(text) {
   const lines = text.split(/\r\n|\n|\r/).filter(l => l.trim().length);
@@ -916,20 +1145,24 @@ function confirmImport() {
       productId = r.matched.id;
     } else {
       productId = "IMP" + Date.now() + Math.floor(Math.random() * 1000);
-      overlay.addedProducts.push({
+      const importedProduct = {
         id: productId, productType: r.raw.productType, productTypeTh: r.raw.productType,
         grade: r.raw.grade, surface: r.raw.surface || "-", dimensionLabel: r.raw.dimensionLabel,
         dimensions: {}, unit: r.raw.unit || "pc", active: true, searchTokens: [], needsReview: false, reviewNote: "",
-      });
+      };
+      overlay.addedProducts.push(importedProduct);
+      postToApi("upsertProduct", { product: importedProduct });
       createdProducts++;
     }
-    overlay.addedPrices.push({
+    const importedPrice = {
       id: "IMPH" + Date.now() + Math.floor(Math.random() * 1000), productId,
       price: r.price, pricePerKg: r.raw.pricePerKg ? parseFloat(r.raw.pricePerKg) : null,
       pricePerKgCalculated: false, currency: "THB",
       effectiveDate: r.raw.effectiveDate || new Date().toISOString().slice(0, 10),
       source: r.raw.source || "CSV Import", notes: r.raw.notes || "", needsReview: false,
-    });
+    };
+    overlay.addedPrices.push(importedPrice);
+    postToApi("addPrice", { price: importedPrice });
     added++;
   });
   saveOverlay(); invalidateCache(); populateFilterOptions();
@@ -973,11 +1206,13 @@ function renderReviewTable() {
 /* ---------------------------------------------------------------------------
    Init
 --------------------------------------------------------------------------- */
-function init() {
+async function init() {
+  const synced = await syncFromApi();
   populateFilterOptions();
   document.getElementById("headerMeta").textContent =
     getAllProducts().length + " products · " + getAllPrices().length + " price records · updated through " +
-    fmtDate((DB.priceHistory.map(p => p.effectiveDate).sort().pop()));
+    fmtDate((DB.priceHistory.map(p => p.effectiveDate).sort().pop())) +
+    (synced ? " · ☁ live" : " · offline snapshot");
   renderSearch();
   renderHistoryView();
 }

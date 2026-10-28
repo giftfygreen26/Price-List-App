@@ -17,7 +17,7 @@
         <div class="sub">Smart Price Search &amp; Quotation Tool</div>
       </div>
     </div>
-    <div class="sub" id="headerMeta"></div>
+    <div class="sub" id="headerMeta">Loading…</div>
   </header>
 
   <nav class="tabs">
@@ -138,12 +138,21 @@
             <div><label>Surface / Finish</label><input type="text" id="npSurface" placeholder="e.g. 2B"></div>
             <div style="grid-column:1/-1;"><label>Size / Dimension Label</label><input type="text" id="npDimLabel" placeholder="e.g. 1.0mm x 4' x 8'"></div>
             <div><label>Unit</label><input type="text" id="npUnit" placeholder="e.g. Sheet / เส้น (Length)"></div>
-            <div style="display:flex;align-items:flex-end;gap:6px;padding-bottom:9px;">
-              <input type="checkbox" id="npNeedsReview" style="width:16px;height:16px;">
-              <label style="margin:0;">⚠️ Needs Review</label>
+            <div><label>Current Price (THB / unit)</label><input type="number" id="npEditPrice" step="0.01" placeholder="leave blank to keep existing"></div>
+            <div><label>Current Price per KG (optional)</label><input type="number" id="npEditPriceKg" step="0.01"></div>
+            <div style="display:flex;align-items:flex-end;gap:16px;padding-bottom:9px;">
+              <span style="display:flex;align-items:center;gap:6px;">
+                <input type="checkbox" id="npActive" checked style="width:16px;height:16px;">
+                <label style="margin:0;">✅ Active</label>
+              </span>
+              <span style="display:flex;align-items:center;gap:6px;">
+                <input type="checkbox" id="npNeedsReview" style="width:16px;height:16px;">
+                <label style="margin:0;">⚠️ Needs Review</label>
+              </span>
             </div>
             <div style="grid-column:1/-1;"><label>Review Note (shown on Import/Review tab)</label><input type="text" id="npReviewNote" placeholder="e.g. Verify alloy grade with supplier"></div>
           </div>
+          <p class="subtle" id="productFormPriceHint">Changing the price here adds a new price-history record (old prices are kept). Uncheck Active to hide a mistaken/duplicate item without deleting its history.</p>
           <div class="form-actions">
             <button class="btn btn-primary" id="addProductBtn">Add Product</button>
             <button class="btn btn-secondary" id="cancelEditBtn" style="display:none;">Cancel Edit</button>
@@ -214,11 +223,15 @@
     <!-- ============= IMPORT / REVIEW VIEW ============= -->
     <section class="view" id="view-import">
       <div class="card">
-        <h3>📥 Import New Price List (CSV)</h3>
-        <p class="subtle">CSV columns: <code>productId, productType, grade, surface, dimensionLabel, price, pricePerKg, effectiveDate, source, notes</code>. If <code>productId</code> is left blank, the system tries to match an existing product by type+grade+surface+size; unmatched rows are flagged for manual review before anything is saved.</p>
+        <h3>📥 Import New Price List (CSV or Excel)</h3>
+        <p class="subtle">CSV/Excel columns: <code>productId, productType, grade, surface, dimensionLabel, price, pricePerKg, effectiveDate, source, notes</code>. If <code>productId</code> is left blank, the system tries to match an existing product by type+grade+surface+size; unmatched rows are flagged for manual review before anything is saved.</p>
+        <p class="subtle">You can also drag a supplier-style Excel sheet with columns like <code>Grade, Surface, Size (mm), B/kg</code> plus one column per panel size (e.g. <code>4' x 8'</code>, <code>5' x 10'</code>) — the app will automatically convert it to price rows using the effective date below.</p>
+        <div class="form-grid" style="grid-template-columns:220px;margin-bottom:10px;">
+          <div><label>Effective Date (used for Excel sheets without a date column)</label><input type="date" id="importDate"></div>
+        </div>
         <label class="dropzone" id="dropzone">
-          <input type="file" id="csvFile" accept=".csv">
-          <div>📄 Click to choose a CSV file, or drag one here</div>
+          <input type="file" id="csvFile" accept=".csv,.xlsx,.xls">
+          <div>📄 Click to choose a CSV or Excel file, or drag one here</div>
         </label>
         <div id="importSummary" class="section-gap"></div>
         <div id="importPreviewWrap" class="section-gap" style="display:none;">
@@ -257,7 +270,9 @@
 
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="data.js"></script>
+<script src="config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
